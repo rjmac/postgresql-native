@@ -3,7 +3,7 @@ module Database.Postgresql.Native.Connection.OpenSSL (
 ) where
 
 import Control.Exception (bracketOnError, catch, SomeException, throwIO, finally)
-import Control.Monad (join)
+import Control.Monad (join, unless)
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as NSB
 import qualified Data.ByteString.Lazy as BSL
@@ -43,11 +43,16 @@ tryConnect sslctx ai = bracketOnError createSocket NS.close doConnect
           doConnect s = do
             NS.connect s (NS.addrAddress ai)
             ref <- newIORef $ Socket s
+            closed <- newIORef False
+            let checkClosed op = do
+                          isClosed <- readIORef closed
+                          unless isClosed op
+                setClosed = writeIORef closed True
             return $ Connection {
                           send = sendVia ref
                         , recv = recvVia ref
-                        , closeNicely = closeNicelyVia ref
-                        , closeRudely = closeRudelyVia ref
+                        , closeNicely = (checkClosed $ closeNicelyVia ref) >> setClosed
+                        , closeRudely = (checkClosed $ closeRudelyVia ref) >> setClosed
                         , makeSSL = Just (sslify sslctx ref)
                         , sendSCMCredentials = Nothing
                         }
@@ -62,7 +67,7 @@ recvVia t n = transport NSB.recv OSSL.read t >>= ($ n)
 closeNicelyVia :: IORef Transport -> IO ()
 closeNicelyVia = join . transport' NS.close closessl
     where closessl :: NS.Socket -> OSSL.SSL -> IO ()
-          closessl sock ssl = OSSL.shutdown ssl OSSL.Bidirectional `finally` NS.close sock
+          closessl sock ssl = OSSL.shutdown ssl OSSL.Unidirectional `finally` NS.close sock
 
 closeRudelyVia :: IORef Transport -> IO ()
 closeRudelyVia = join . transport' NS.close (flip $ const NS.close)
