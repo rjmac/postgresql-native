@@ -3,7 +3,7 @@
 module Main where
 
 import Control.Exception
-import Control.Monad (when,forever)
+import Control.Monad (when)
 import Data.Typeable
 
 import qualified Database.Postgresql.Native.Transport as T
@@ -29,45 +29,69 @@ data ConnectionFailure = SSLNotSupportedByServer
                          deriving (Show, Typeable)
 instance Exception ConnectionFailure
 
-initSslCtx :: IO OSSL.SSLContext
-initSslCtx = do
+initOSSLCtx :: IO OSSL.SSLContext
+initOSSLCtx = do
   sslCtx <- OSSL.context
   OSSL.contextSetCiphers sslCtx "DEFAULT"
   OSSL.contextSetVerificationMode sslCtx OSSL.VerifyNone
   return sslCtx
 
-initConnCtx :: IO NC.ConnectionContext
-initConnCtx = NC.initConnectionContext
+initNCCtx :: IO NC.ConnectionContext
+initNCCtx = NC.initConnectionContext
+
+createOSSLConnection :: OSSL.SSLContext -> IO C.Connection
+createOSSLConnection ctx = CO.connect ctx "localhost" 5432
+
+createNCConnection :: NC.ConnectionContext -> IO C.Connection
+createNCConnection ctx = CC.connect ctx NC.ConnectionParams {
+                           NC.connectionHostname = "localhost"
+                         , NC.connectionPort = 5432
+                         , NC.connectionUseSecure =
+                             Just def { NC.settingDisableCertificateValidation = True }
+                         , NC.connectionUseSocks = Nothing
+                         }
 
 main :: IO ()
-main = withOpenSSL $ bracket (initConnCtx >>= conn) disconn go
+main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
     where conn ctx = T.open def { T.createConnection = createConnection ctx }
-          createConnection ctx = bracketOnError (createNCConnection ctx)
+          createConnection ctx = bracketOnError (createOSSLConnection ctx)
                                                 C.closeRudely
                                                 (trace putStrLn)
-          createOSSLConnection ctx = CO.connect ctx "localhost" 5432
-          createNCConnection ctx = CC.connect ctx ncParams
-          ncParams = NC.ConnectionParams {
-                       NC.connectionHostname = "localhost"
-                     , NC.connectionPort = 5432
-                     , NC.connectionUseSecure = Just def {
-                                                  NC.settingDisableCertificateValidation = True
-                                                }
-                     , NC.connectionUseSocks = Nothing
-                     }
-          disconn = T.closeRudely
           creds = UsernameAndPassword "pgnative" "pgnative"
           go t = do
             maybeUpgrade t
             login creds t
             -- TODO: Set up receive loop, parameter store, backend key
-            -- TODO: await ready for query
-            sendMessage t $ Query "COPY three_rows TO STDOUT CSV" -- "select * from three_rows"
+            awaitRFQ t
+            sendMessage t $ Query "select * from three_rows"
             -- sendMessage t $ Query "LISTEN gnu" -- "select * from three_rows"
-            _ <- forever $ do
-              packet <- receiveMessage t (1024*1024)
-              print packet
+            receiveMessagesUntilError t
             T.closeNicely t
+
+awaitRFQ :: T.Transport -> IO ()
+awaitRFQ t = do
+  msg <- nextMessage t
+  case msg of
+    ReadyForQuery _ -> return ()
+    _ -> awaitRFQ t
+
+receiveMessagesForever :: T.Transport -> IO a
+receiveMessagesForever t = do
+  _ <- nextMessage t
+  receiveMessagesForever t
+
+receiveMessagesUntilError :: T.Transport -> IO ()
+receiveMessagesUntilError t = do
+  msg <- nextMessage t
+  case msg of
+    ErrorResponse _ -> return ()
+    _ -> receiveMessagesUntilError t
+
+nextMessage :: T.Transport -> IO FromBackend
+nextMessage t = do
+  msg <- receiveMessage t (1024*1024)
+  print msg
+  return msg
 
 maybeUpgrade :: T.Transport -> IO ()
 maybeUpgrade t =
@@ -92,7 +116,7 @@ badCredsType _ _ = throwIO BadCredsType
 
 auth :: Credentials -> T.Transport -> IO ()
 auth creds t = do
-  msg <- receiveMessage t (1024*1024)
+  msg <- nextMessage t
   case msg of
     AuthenticationResponse AuthOK ->
         return ()
