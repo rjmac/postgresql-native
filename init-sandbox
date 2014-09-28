@@ -1,0 +1,18 @@
+#!/bin/sh
+
+sandbox="$(pwd)/sandbox"
+
+if [ ! -d "$sandbox" ]; then
+   mkdir "$sandbox"
+   cd "$sandbox"
+   cabal sandbox init --sandbox .
+   cd ..
+fi
+
+for file in *; do
+    if [ -d "$file" -a ! -f "$file/cabal.sandbox.config" ]; then
+        cd "$file"
+        cabal sandbox init --sandbox "$sandbox"
+        cd ..
+    fi
+done
