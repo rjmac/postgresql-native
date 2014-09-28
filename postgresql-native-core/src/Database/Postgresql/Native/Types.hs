@@ -60,6 +60,7 @@ unsafeNewByteString0 bs = ByteString0 bs
 newByteString0 :: ByteString -> ByteString0
 newByteString0 = unsafeNewByteString0 -- todo check for 0
 
+-- | Field codes are in <http://www.postgresql.org/docs/9.4/static/protocol-error-fields.html the manual>
 type MessageField = Char
 
 newtype PortalName = PortalName ByteString0 deriving (Show, Read, Eq, Ord)
@@ -96,22 +97,26 @@ data StatusIndicator = StatusIdle -- 'I'
 -- This is a bit ick
 data RowColumnDescription = RowColumnDescription {
       rcFieldName :: ByteString0
-    , rcColumn :: Oid             --   Column oid, if the field is a table column, or 0
-    , rcColumnAttribute :: Word16 --   Column attribute number, if the field is a table column, or 0
-    , rcType :: Oid               --   oid of the field's type
-    , rcTypeSize :: Int16         --   data type size -- negative means variable-sized (pg_type.typlen)
-    , rcTypeModifier :: Word32    --   type modifier (pg_attribute.atttypmod).  Meaning is type-specific
+    , rcColumn :: Oid
+    -- ^ Column oid, if the field is a table column, or 0
+    , rcColumnAttribute :: Word16
+    -- ^ Column attribute number, if the field is a table column, or 0
+    , rcType :: Oid
+    -- ^ oid of the field's type
+    , rcTypeSize :: Int16
+    -- ^ data type size (See <http://www.postgresql.org/docs/9.4/static/catalog-pg-type.html pg_type.typelen>)
+    , rcTypeModifier :: Word32
+    -- ^ type modifier (See <http://www.postgresql.org/docs/9.4/static/catalog-pg-attribute.html pg_attribute.atttypmod>)
     , tcFormatCode :: FormatCode
     } deriving (Show, Read, Eq, Ord)
 
--- The lists here must not be >65535 elements long; their length is
--- encoded as a 16-bit integer.
 data BoundParams = UniformatParams FormatCode [Maybe ByteString]
+                 -- ^ The list must contain fewer than 2^16 elements.
                  | PolyformatParams [(FormatCode, Maybe ByteString)]
+                 -- ^ The list must contain fewer than 2^16 elements.
                    deriving (Eq, Ord, Show, Read)
 
--- The list of format codes must not be >65535 elements long; its length
--- is encoded as a 16-bit integer.
 data ResultFormat = UniformatResult FormatCode
                   | PolyformatResult [FormatCode]
+                    -- ^ The list must contain fewer than 2^16 elements.
                     deriving (Eq, Ord, Show, Read)
