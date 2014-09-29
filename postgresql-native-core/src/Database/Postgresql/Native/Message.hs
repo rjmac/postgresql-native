@@ -1,12 +1,8 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-
 -- | <http://www.postgresql.org/docs/9.4/static/protocol-message-formats.html>
 module Database.Postgresql.Native.Message where
 
-import Control.Exception (Exception)
 import Data.ByteString (ByteString)
 import Data.Word (Word32)
-import Data.Typeable (Typeable)
 
 import Database.Postgresql.Native.Types
 
@@ -63,9 +59,3 @@ data InitialMessage = SSLRequest
                     | StartupMessage [(ByteString0,ByteString0)]
                     | CancelRequest ServerPid ServerKey
                       deriving (Show, Read, Eq, Ord)
-
-data ProtocolError = PacketTooLarge
-                   | ParseError [String] String
-                   | UnexpectedMessage FromBackend
-                     deriving (Show, Typeable)
-instance Exception ProtocolError

@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Database.Postgresql.Native.Transport,
                        Database.Postgresql.Native.Message,
-                       Database.Postgresql.Native.Message.Transport,
+                       Database.Postgresql.Native.ProtocolError,
                        Database.Postgresql.Native.Message.Deserialization,
                        Database.Postgresql.Native.Message.Serialization,
                        Database.Postgresql.Native.Utils,

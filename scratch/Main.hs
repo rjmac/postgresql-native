@@ -15,8 +15,8 @@ import qualified Database.Postgresql.Native.Connection.Connection as CC
 import qualified Network.Connection as NC
 import Database.Postgresql.Native.Connection.Tracing
 import Database.Postgresql.Native.Message
-import Database.Postgresql.Native.Message.Transport
 import Database.Postgresql.Native.Types
+import Database.Postgresql.Native.ProtocolError (ProtocolError(UnexpectedEndOfInput))
 import Data.Default.Class (def)
 
 import Database.Postgresql.Native.Utils
@@ -79,16 +79,17 @@ defaultAuthenticator = Authenticator auth
 passwordAuthenticator :: ByteString0 -> Authenticator
 passwordAuthenticator password = Authenticator auth
     where auth CleartextPassword = Just $ \t _ -> do
-                                     sendMessage t $ PasswordMessage $ password
+                                     T.sendMessage t $ PasswordMessage $ password
                                      expectAuthOK t
           auth (MD5Password salt) = Just $ \t username -> do
-                                      sendMessage t $ PasswordMessage $ md5password username password salt
+                                      T.sendMessage t $ PasswordMessage $ md5password username password salt
                                       expectAuthOK t
           auth _ = Nothing
 
 main :: IO ()
 main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
-    where conn ctx = T.open def { T.createConnection = createConnection ctx }
+    where conn ctx = T.open def { T.createConnection = createConnection ctx
+                                , T.trace = putStrLn }
           createConnection ctx = bracketOnError (createOSSLConnection ctx)
                                                 C.closeRudely
                                                 (trace putStrLn)
@@ -98,10 +99,10 @@ main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
             login t "pgnative" auth
             -- TODO: Set up receive loop, parameter store, backend key
             awaitRFQ t
-            sendMessage t $ Query "select * from three_rows"
-            -- sendMessage t $ Query "LISTEN gnu" -- "select * from three_rows"
+            T.sendMessage t $ Query "select * from three_rows"
+            -- T.sendMessage t $ Query "LISTEN gnu" -- "select * from three_rows"
             receiveMessagesUntilError t
-            sendMessage t Terminate
+            T.sendMessage t Terminate
             T.closeNicely t
 
 awaitRFQ :: T.Transport -> IO ()
@@ -125,15 +126,16 @@ receiveMessagesUntilError t = do
 
 nextMessage :: T.Transport -> IO FromBackend
 nextMessage t = do
-  msg <- receiveMessage t (1024*1024)
-  print msg
-  return msg
+  msg <- T.receiveMessage t
+  case msg of
+    Just m -> return m
+    Nothing -> throwIO UnexpectedEndOfInput
 
 maybeUpgrade :: T.Transport -> IO ()
 maybeUpgrade t =
     when (T.canMakeSSL t) $ do
-      sendInitialMessage t SSLRequest
-      resp <- receiveSSLResponse t
+      T.sendInitialMessage t SSLRequest
+      resp <- T.receiveSSLResponse t
       case resp of
         SSLOK -> T.makeSSL t
         SSLNotOK -> throwIO SSLNotSupportedByServer
@@ -141,8 +143,8 @@ maybeUpgrade t =
 
 login :: T.Transport -> ByteString0 -> Authenticator -> IO ()
 login t username (Authenticator auth) = do
-  sendInitialMessage t $ StartupMessage [("user",username)
-                                        ,("database","pgnative_test")]
+  T.sendInitialMessage t $ StartupMessage [("user",username)
+                                          ,("database","pgnative_test")]
   msg <- nextMessage t
   case msg of
     AuthenticationResponse code ->
