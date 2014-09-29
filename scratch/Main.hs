@@ -1,10 +1,12 @@
-{-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings, DeriveDataTypeable, LambdaCase #-}
 
 module Main where
 
 import Control.Exception
 import Control.Monad (when)
 import Data.Typeable
+import Data.Monoid (Monoid, mempty, mappend, (<>))
+import Control.Applicative ((<|>))
 
 import qualified Database.Postgresql.Native.Transport as T
 import qualified Database.Postgresql.Native.Connection as C
@@ -51,21 +53,55 @@ createNCConnection ctx = CC.connect ctx NC.ConnectionParams {
                          , NC.connectionUseSocks = Nothing
                          }
 
+newtype Authenticator = Authenticator (AuthResultCode -> Maybe (T.Transport -> ByteString0 -> IO ()))
+
+instance Monoid Authenticator where
+    mempty = Authenticator $ const Nothing
+    mappend (Authenticator a) (Authenticator b) =
+        Authenticator $ \ac -> a ac <|> b ac
+
+expectAuthOK :: T.Transport -> IO ()
+expectAuthOK t = do
+  msg <- nextMessage t
+  case msg of
+    AuthenticationResponse AuthOK -> return ()
+    ErrorResponse oops -> error $ show oops
+    _ -> error $ "unexpected message" ++ show msg
+                    
+defaultAuthenticator :: Authenticator
+defaultAuthenticator = Authenticator auth
+    where auth AuthOK = Just $ \_ _ -> return ()
+          auth SCMCredential = Just $ \t _ -> do
+                                 T.sendSCMCredentials t
+                                 expectAuthOK t
+          auth _ = Nothing
+
+passwordAuthenticator :: ByteString0 -> Authenticator
+passwordAuthenticator password = Authenticator auth
+    where auth CleartextPassword = Just $ \t _ -> do
+                                     sendMessage t $ PasswordMessage $ password
+                                     expectAuthOK t
+          auth (MD5Password salt) = Just $ \t username -> do
+                                      sendMessage t $ PasswordMessage $ md5password username password salt
+                                      expectAuthOK t
+          auth _ = Nothing
+
 main :: IO ()
 main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
     where conn ctx = T.open def { T.createConnection = createConnection ctx }
           createConnection ctx = bracketOnError (createOSSLConnection ctx)
                                                 C.closeRudely
                                                 (trace putStrLn)
-          creds = UsernameAndPassword "pgnative" "pgnative"
+          auth = defaultAuthenticator <> passwordAuthenticator "pgnative"
           go t = do
             maybeUpgrade t
-            login creds t
+            login t "pgnative" auth
             -- TODO: Set up receive loop, parameter store, backend key
             awaitRFQ t
             sendMessage t $ Query "select * from three_rows"
             -- sendMessage t $ Query "LISTEN gnu" -- "select * from three_rows"
             receiveMessagesUntilError t
+            sendMessage t Terminate
             T.closeNicely t
 
 awaitRFQ :: T.Transport -> IO ()
@@ -103,47 +139,15 @@ maybeUpgrade t =
         SSLNotOK -> throwIO SSLNotSupportedByServer
         SSLFatal -> throwIO SSLNotSupportedByServer
 
-data Credentials = UsernameOnly ByteString0
-                 | UsernameAndPassword ByteString0 ByteString0
-                   deriving (Read, Show, Eq)
-
-username :: Credentials -> ByteString0
-username (UsernameOnly u) = u
-username (UsernameAndPassword u _) = u
-
-badCredsType :: Credentials -> String -> IO a
-badCredsType _ _ = throwIO BadCredsType
-
-auth :: Credentials -> T.Transport -> IO ()
-auth creds t = do
+login :: T.Transport -> ByteString0 -> Authenticator -> IO ()
+login t username (Authenticator auth) = do
+  sendInitialMessage t $ StartupMessage [("user",username)
+                                        ,("database","pgnative_test")]
   msg <- nextMessage t
   case msg of
-    AuthenticationResponse AuthOK ->
-        return ()
-    AuthenticationResponse CleartextPassword ->
-        case creds of
-          UsernameAndPassword _ pwd ->
-              do sendMessage t $ PasswordMessage $ pwd
-                 auth creds t
-          _ ->
-              badCredsType creds "UsernameAndPassword"
-    AuthenticationResponse (MD5Password salt) ->
-        case creds of
-          UsernameAndPassword usr pwd ->
-              do sendMessage t $ PasswordMessage $ md5password usr pwd salt
-                 auth creds t
-          _ ->
-              badCredsType creds "UsernameAndPassword"
-    AuthenticationResponse _ ->
-        throwIO UnsupportedAuthenticationRequirement
-    ErrorResponse fields ->
-        throwIO $ ConnectionRejected fields
-    other ->
-        throwIO $ UnexpectedMessage other
-
-login :: Credentials -> T.Transport -> IO ()
-login creds t = do
-  sendInitialMessage t $ StartupMessage [("user","pgnative")
-                                        ,("database","pgnative_test")
-                                        ,("client_encoding","Latin1")]
-  auth creds t
+    AuthenticationResponse code ->
+        case auth code of
+          Just op -> op t username
+          Nothing -> error $ "Cannot respond to " ++ show code
+    ErrorResponse c -> error $ show c
+    _ -> error $ "unexpected message: " ++ show msg
