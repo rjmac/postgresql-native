@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+cd sandbox
+cabal sandbox hc-pkg unregister postgresql-native-connection
+cabal sandbox hc-pkg unregister postgresql-native-openssl
+cd ..
+
+cd postgresql-native-core
+cabal clean
+cabal configure
+cabal install
+cd ..
+cd postgresql-native-connection
+cabal clean
+cabal configure
+cabal install
+cd ..
+cd postgresql-native-openssl
+cabal clean
+cabal configure
+cabal install
+cd ..
+cd scratch
+cabal clean
+cabal configure
+cabal build
+cd ..
