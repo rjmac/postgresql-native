@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, RecordWildCards,NamedFieldPuns #-}
+{-# LANGUAGE CPP, RecordWildCards, NamedFieldPuns, LambdaCase #-}
 
 module Database.Postgresql.Native.Transport (
   Transport
@@ -152,9 +152,8 @@ doConsume t@Transport{tRemainingRef} amount parser = do
                | otherwise -> error "non-empty leftovers?"
 
 receiveMessage :: Transport -> IO (Maybe FromBackend)
-receiveMessage t@Transport{tSettings} = do
-  headerInfo <- consume t headerLength header
-  case headerInfo of
+receiveMessage t@Transport{tSettings} =
+  consume t headerLength header >>= \case
     Just (packetType, packetLen) ->
         do when (packetLen > maxPacketSize tSettings) (throwIO PacketTooLarge)
            msg <- consume' t (packetLen - 4) (deserializer packetType)

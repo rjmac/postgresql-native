@@ -3,7 +3,7 @@
 module Main where
 
 import Control.Exception
-import Control.Monad (when)
+import Control.Monad (when, forever)
 import Data.Typeable
 import Data.Monoid (Monoid, mempty, mappend, (<>))
 import Control.Applicative ((<|>))
@@ -61,12 +61,11 @@ instance Monoid Authenticator where
         Authenticator $ \ac -> a ac <|> b ac
 
 expectAuthOK :: T.Transport -> IO ()
-expectAuthOK t = do
-  msg <- nextMessage t
-  case msg of
+expectAuthOK t =
+  nextMessage t >>= \case
     AuthenticationResponse AuthOK -> return ()
     ErrorResponse oops -> error $ show oops
-    _ -> error $ "unexpected message" ++ show msg
+    other -> error $ "unexpected message" ++ show other
                     
 defaultAuthenticator :: Authenticator
 defaultAuthenticator = Authenticator auth
@@ -106,28 +105,23 @@ main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
             T.closeNicely t
 
 awaitRFQ :: T.Transport -> IO ()
-awaitRFQ t = do
-  msg <- nextMessage t
-  case msg of
+awaitRFQ t =
+  nextMessage t >>= \case
     ReadyForQuery _ -> return ()
     _ -> awaitRFQ t
 
 receiveMessagesForever :: T.Transport -> IO a
-receiveMessagesForever t = do
-  _ <- nextMessage t
-  receiveMessagesForever t
+receiveMessagesForever t = forever $ nextMessage t
 
 receiveMessagesUntilError :: T.Transport -> IO ()
-receiveMessagesUntilError t = do
-  msg <- nextMessage t
-  case msg of
+receiveMessagesUntilError t =
+  nextMessage t >>= \case
     ErrorResponse _ -> return ()
     _ -> receiveMessagesUntilError t
 
 nextMessage :: T.Transport -> IO FromBackend
-nextMessage t = do
-  msg <- T.receiveMessage t
-  case msg of
+nextMessage t =
+  T.receiveMessage t >>= \case
     Just m -> return m
     Nothing -> throwIO UnexpectedEndOfInput
 
@@ -145,11 +139,10 @@ login :: T.Transport -> ByteString0 -> Authenticator -> IO ()
 login t username (Authenticator auth) = do
   T.sendInitialMessage t $ StartupMessage [("user",username)
                                           ,("database","pgnative_test")]
-  msg <- nextMessage t
-  case msg of
+  nextMessage t >>= \case
     AuthenticationResponse code ->
         case auth code of
           Just op -> op t username
           Nothing -> error $ "Cannot respond to " ++ show code
     ErrorResponse c -> error $ show c
-    _ -> error $ "unexpected message: " ++ show msg
+    other -> error $ "unexpected message: " ++ show other
