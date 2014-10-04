@@ -107,7 +107,7 @@ data RowColumnDescription = RowColumnDescription {
     -- ^ data type size (See <http://www.postgresql.org/docs/9.4/static/catalog-pg-type.html pg_type.typelen>)
     , rcTypeModifier :: Word32
     -- ^ type modifier (See <http://www.postgresql.org/docs/9.4/static/catalog-pg-attribute.html pg_attribute.atttypmod>)
-    , tcFormatCode :: FormatCode
+    , rcFormatCode :: FormatCode
     } deriving (Show, Read, Eq, Ord)
 
 data BoundParams = UniformatParams FormatCode [Maybe ByteString]
