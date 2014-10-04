@@ -27,9 +27,9 @@ library
                        Database.Postgresql.Native.Types.Deserialization,
                        Database.Postgresql.Native.Types.Serialization,
                        Database.Postgresql.Native.Connection,
-                       Database.Postgresql.Native.Connection.UnixDomainSocket,
                        Database.Postgresql.Native.Connection.TCPSocket,
-                       Database.Postgresql.Native.Connection.Tracing
+                       Database.Postgresql.Native.Connection.Tracing,
+                       Database.Postgresql.Native.Utils.PgPass.PermissionFailReason
   -- other-modules:       
   other-extensions:    DeriveDataTypeable
   build-depends:       base >=4.7 && <4.8,
@@ -44,5 +44,9 @@ library
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -O2
-  if os(windows)
-    cpp-options:       -DNO_UNIX_DOMAIN_SOCKETS
+  if !os(windows)
+    exposed-modules:   Database.Postgresql.Native.Utils.PgPass.Unix,
+                       Database.Postgresql.Native.Connection.UnixDomainSocket
+    build-depends:     unix >=2.7 && <2.8
+    cpp-options:       -DPGN_HAVE_UNIX_DOMAIN_SOCKETS
+                       -DPGN_HAVE_STAT

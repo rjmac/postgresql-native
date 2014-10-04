@@ -1,12 +1,8 @@
-{-# LANGUAGE CPP, ForeignFunctionInterface #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 
 module Database.Postgresql.Native.Connection.UnixDomainSocket (
-#ifndef NO_UNIX_DOMAIN_SOCKETS
   connect
-#endif
 ) where
-
-#ifndef NO_UNIX_DOMAIN_SOCKETS
 
 import Control.Exception (bracketOnError)
 import qualified Network.Socket as NS
@@ -45,5 +41,3 @@ c_sendCreds _ = return 0
 -- TODO: this.  NOT A FAN OF CABAL BTW
 -- -- returns positive for success, 0 for "don't have CMSG", -1 for other error
 -- foreign import ccall unsafe "hspgnative_sendcreds" c_sendCreds :: CInt -> IO CInt
-
-#endif
