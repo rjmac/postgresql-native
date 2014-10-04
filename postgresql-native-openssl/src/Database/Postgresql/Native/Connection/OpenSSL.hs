@@ -1,5 +1,9 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Database.Postgresql.Native.Connection.OpenSSL (
   connect
+, PostUpgradeCheck
+, noopPostUpgradeCheck
 ) where
 
 import Control.Exception (bracketOnError, catch, SomeException, throwIO, finally)
@@ -19,10 +23,17 @@ defaultAddrInfo = NS.defaultHints {
                   , NS.addrSocketType = NS.Stream
                   }
 
-connect :: OSSL.SSLContext -> NS.HostName -> NS.PortNumber -> IO Connection
-connect sslctx host port = do
+-- | A callback run after an openssl connection handshake.  It exists
+-- in order to enable cert verification.
+type PostUpgradeCheck = OSSL.SSL -> IO ()
+
+noopPostUpgradeCheck :: PostUpgradeCheck
+noopPostUpgradeCheck _ = return ()
+
+connect :: OSSL.SSLContext -> PostUpgradeCheck -> NS.HostName -> NS.PortNumber -> IO Connection
+connect sslctx postUpgrade host port = do
   addrs <- NS.getAddrInfo (Just defaultAddrInfo) (Just host) (Just $ show port)
-  firstSuccessful $ map (tryConnect sslctx) addrs
+  firstSuccessful $ map (tryConnect sslctx postUpgrade) addrs
 
 data Transport = Socket NS.Socket
                | SSL NS.Socket OSSL.SSL
@@ -37,8 +48,8 @@ transport' viaSocket viaSSL tRef = do
     Socket s -> return $ viaSocket s
     SSL sock ssl -> return $ viaSSL sock ssl
 
-tryConnect :: OSSL.SSLContext -> NS.AddrInfo -> IO Connection
-tryConnect sslctx ai = bracketOnError createSocket NS.close doConnect
+tryConnect :: OSSL.SSLContext -> PostUpgradeCheck -> NS.AddrInfo -> IO Connection
+tryConnect sslctx postUpgrade ai = bracketOnError createSocket NS.close doConnect
     where createSocket = NS.socket (NS.addrFamily ai) (NS.addrSocketType ai) (NS.addrProtocol ai)
           doConnect s = do
             NS.connect s (NS.addrAddress ai)
@@ -53,7 +64,7 @@ tryConnect sslctx ai = bracketOnError createSocket NS.close doConnect
                         , recv = recvVia ref
                         , closeNicely = (checkClosed $ closeNicelyVia ref) >> setClosed
                         , closeRudely = (checkClosed $ closeRudelyVia ref) >> setClosed
-                        , makeSSL = Just (sslify sslctx ref)
+                        , makeSSL = Just (sslify sslctx postUpgrade ref)
                         , sendSCMCredentials = Nothing
                         }
 
@@ -72,13 +83,14 @@ closeNicelyVia = join . transport' NS.close closessl
 closeRudelyVia :: IORef Transport -> IO ()
 closeRudelyVia = join . transport' NS.close (flip $ const NS.close)
 
-sslify :: OSSL.SSLContext -> IORef Transport -> IO ()
-sslify sslctx ref = do
+sslify :: OSSL.SSLContext -> PostUpgradeCheck -> IORef Transport -> IO ()
+sslify sslctx postConnect ref = do
   current <- readIORef ref
   case current of
     Socket s -> do
       ssl <- OSSL.connection sslctx s
       OSSL.connect ssl
+      postConnect ssl
       writeIORef ref (SSL s ssl)
     SSL _ _ -> error "already SSL" -- or should it just ignore?
 

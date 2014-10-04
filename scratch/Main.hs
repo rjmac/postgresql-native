@@ -42,7 +42,7 @@ initNCCtx :: IO NC.ConnectionContext
 initNCCtx = NC.initConnectionContext
 
 createOSSLConnection :: OSSL.SSLContext -> IO C.Connection
-createOSSLConnection ctx = CO.connect ctx "localhost" 5432
+createOSSLConnection ctx = CO.connect ctx CO.noopPostUpgradeCheck "localhost" 5432
 
 createNCConnection :: NC.ConnectionContext -> IO C.Connection
 createNCConnection ctx = CC.connect ctx NC.ConnectionParams {
@@ -100,7 +100,13 @@ main = withOpenSSL $ bracket (initOSSLCtx >>= conn) T.closeRudely go
             awaitRFQ t
             T.sendMessage t $ Query "select * from three_rows"
             -- T.sendMessage t $ Query "LISTEN gnu" -- "select * from three_rows"
-            receiveMessagesUntilError t
+            awaitRFQ t
+            T.sendMessage t $ Query "select now()"
+            awaitRFQ t
+            T.sendMessage t $ Query "SET DateStyle TO 'Postgresql, DMY'"
+            awaitRFQ t
+            T.sendMessage t $ Query "select now()"
+            awaitRFQ t
             T.sendMessage t Terminate
             T.closeNicely t
 
@@ -138,7 +144,8 @@ maybeUpgrade t =
 login :: T.Transport -> ByteString0 -> Authenticator -> IO ()
 login t username (Authenticator auth) = do
   T.sendInitialMessage t $ StartupMessage [("user",username)
-                                          ,("database","pgnative_test")]
+                                          ,("database","pgnative_test")
+                                          ,("DateStyle","ISO, noneuro")]
   nextMessage t >>= \case
     AuthenticationResponse code ->
         case auth code of
