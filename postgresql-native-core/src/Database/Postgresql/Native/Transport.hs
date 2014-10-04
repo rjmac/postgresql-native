@@ -23,7 +23,7 @@ import Control.Monad (when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.ByteString (ByteString)
-import Data.Attoparsec.ByteString (parse, Result, IResult(..), Parser, endOfInput)
+import Data.Attoparsec.ByteString (parse, parseOnly, Result, IResult(..), Parser, endOfInput)
 import Data.Word (Word32)
 import Data.Maybe (fromMaybe, isJust)
 
@@ -72,16 +72,16 @@ open ts@TransportSettings{..} =
     bracketOnError createConnection C.closeRudely new
         where new c = Transport ts c <$> newIORef BS.empty
 
-available :: Transport -> IO Int
-available Transport{tRemainingRef} = BS.length <$> readIORef tRemainingRef
+available :: Transport -> IO Word32
+available Transport{tRemainingRef} = (fromIntegral . BS.length) <$> readIORef tRemainingRef
 
-recv :: Transport -> IO Int
+recv :: Transport -> IO Word32
 recv t@Transport{..} = do
   remaining <- available t
   when (remaining /= 0) $ error "recv called with bytes remaining in the buffer"
   bs <- C.recv tConn (bufSize tSettings)
   writeIORef tRemainingRef bs
-  return $ BS.length bs
+  return $ fromIntegral $ BS.length bs
 
 recvSome :: Transport -> IO ()
 recvSome t = do
@@ -113,50 +113,62 @@ closeRudely t@Transport{tConn} = do
   C.closeRudely tConn
   clear t
 
-constrainedParser :: Parser a -> (ByteString -> Result a)
-constrainedParser parser = parse $ parser <* endOfInput
-
 -- | Consume a message, permitting EOF
-consume :: Transport -> Word32 -> Parser a -> IO (Maybe a)
-consume t amount parser = do
-  remaining <- available t
-  if remaining == 0
-  then do
-    count <- recv t
-    if count == 0
-    then return Nothing
-    else Just <$> doConsume t amount (constrainedParser parser)
-  else Just <$> doConsume t amount (constrainedParser parser)
+consume :: Transport -> Parser a -> Word32 -> IO (Maybe a)
+consume t parser amount = available t >>= maybeRefill
+    where maybeRefill 0 = recv t >>= \case
+                            0 -> return Nothing
+                            n -> Just <$> haveBytes t parser amount n
+          maybeRefill n = Just <$> haveBytes t parser amount n
 
 -- | Consume a message, not permitting EOF
-consume' :: Transport -> Word32 -> Parser a -> IO a
-consume' t amount = doConsume t amount . constrainedParser
+consume' :: Transport -> Parser a -> Word32 -> IO a
+consume' t parser bytesWanted = available t >>= maybeRefill
+    where maybeRefill 0 = recv t >>= haveBytes t parser bytesWanted
+          maybeRefill n = haveBytes t parser bytesWanted n
 
-doConsume :: Transport -> Word32 -> (ByteString -> Result a) -> IO a
-doConsume t@Transport{tRemainingRef} amount parser = do
+haveBytes :: Transport -> Parser a -> Word32 -> Word32 -> IO a
+haveBytes t parser bytesWanted bytesReady =
+    let p = parser <* endOfInput
+    in if bytesWanted <= bytesReady
+       then doConsumeOnly t (parseOnly p) bytesWanted
+       else doConsume t (parse p) bytesWanted
+
+-- This is only called when the desired number of bytes are definitely available.
+doConsumeOnly :: Transport -> (ByteString -> Either String a) -> Word32 -> IO a
+doConsumeOnly Transport{tRemainingRef} parser bytesWanted = do
   buf <- readIORef tRemainingRef
-  let toRead = fromIntegral $ min (fromIntegral $ BS.length buf) amount
+  let toRead = fromIntegral $ bytesWanted
   writeIORef tRemainingRef $ BS.drop toRead buf
   case parser $ BS.take toRead buf of
-      Fail _ ss s ->
-          throwIO (ParseError ss s)
-      Partial cont | fromIntegral toRead == amount ->
+    Right a -> return a
+    Left err -> throwIO (ParseError err)
+
+doConsume :: Transport -> (ByteString -> Result a) -> Word32 -> IO a
+doConsume t@Transport{tRemainingRef} parser bytesStillWanted = do
+  buf <- readIORef tRemainingRef
+  let bytesAlreadyHave = fromIntegral $ min (fromIntegral $ BS.length buf) bytesStillWanted
+  writeIORef tRemainingRef $ BS.drop bytesAlreadyHave buf
+  case parser $ BS.take bytesAlreadyHave buf of
+      Fail _ _ s ->
+          throwIO (ParseError s)
+      Partial cont | fromIntegral bytesAlreadyHave == bytesStillWanted ->
                        case cont BS.empty of
-                         Fail _ ss s -> throwIO (ParseError ss s)
+                         Fail _ _ s -> throwIO (ParseError s)
                          Partial _ -> error "Partial after EOF?"
                          Done i r | BS.null i -> return r
                                   | otherwise -> error "non-empty leftovers?"
                    | otherwise ->
-                       recvSome t >> doConsume t (amount - fromIntegral toRead) cont
+                       recvSome t >> doConsume t cont (bytesStillWanted - fromIntegral bytesAlreadyHave)
       Done i r | BS.null i -> return r
                | otherwise -> error "non-empty leftovers?"
 
 receiveMessage :: Transport -> IO (Maybe FromBackend)
 receiveMessage t@Transport{tSettings} =
-  consume t headerLength header >>= \case
+  consume t header headerLength >>= \case
     Just (packetType, packetLen) ->
         do when (packetLen > maxPacketSize tSettings) (throwIO PacketTooLarge)
-           msg <- consume' t (packetLen - 4) (deserializer packetType)
+           msg <- consume' t (deserializer packetType) (packetLen - 4)
            trace tSettings $ "-->  " ++ show msg
            return $ Just msg
     Nothing ->
@@ -165,7 +177,7 @@ receiveMessage t@Transport{tSettings} =
 
 receiveSSLResponse :: Transport -> IO SSLResponse
 receiveSSLResponse t@Transport{tSettings} = do
-  msg <- consume' t sslResponseLength sslResponse
+  msg <- consume' t sslResponse sslResponseLength
   trace tSettings $ "-->  " ++ show msg
   return msg
 

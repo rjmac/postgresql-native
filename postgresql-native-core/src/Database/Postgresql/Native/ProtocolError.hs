@@ -14,9 +14,10 @@ import Database.Postgresql.Native.Message (FromBackend(..))
 data ProtocolError = PacketTooLarge
                    -- ^ A message longer than the library is willing
                    -- to commit to holding in memory was received.
-                   | ParseError [String] String
+                   | ParseError String
                    -- ^ Failed to parse a message object from a
-                   -- received packet.
+                   -- received packet.  The `String` is an attoparsec
+                   -- error.
                    | UnexpectedMessage FromBackend
                    -- ^ A message which was supposed to be impossible
                    -- in the current state was received.  For example,
