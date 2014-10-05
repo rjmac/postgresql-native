@@ -3,8 +3,8 @@
 set -e
 
 cd sandbox
-cabal sandbox hc-pkg unregister postgresql-native-connection
-cabal sandbox hc-pkg unregister postgresql-native-openssl
+cabal sandbox hc-pkg unregister postgresql-native-connection || true
+cabal sandbox hc-pkg unregister postgresql-native-openssl || true
 cd ..
 
 cd postgresql-native-core
