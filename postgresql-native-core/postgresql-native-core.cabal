@@ -16,37 +16,38 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Database.Postgresql.Native.Transport,
-                       Database.Postgresql.Native.Message,
-                       Database.Postgresql.Native.ProtocolError,
-                       Database.Postgresql.Native.Message.Deserialization,
-                       Database.Postgresql.Native.Message.Serialization,
-                       Database.Postgresql.Native.Utils,
-                       Database.Postgresql.Native.Utils.SizedBuilder,
-                       Database.Postgresql.Native.Types,
-                       Database.Postgresql.Native.Types.Deserialization,
-                       Database.Postgresql.Native.Types.Serialization,
-                       Database.Postgresql.Native.Connection,
+  exposed-modules:     Database.Postgresql.Native.Connection,
                        Database.Postgresql.Native.Connection.TCPSocket,
                        Database.Postgresql.Native.Connection.Tracing,
-                       Database.Postgresql.Native.Utils.PgPass.PermissionFailReason
-  -- other-modules:       
+                       Database.Postgresql.Native.Message,
+                       Database.Postgresql.Native.ProtocolError,
+                       Database.Postgresql.Native.Transport,
+                       Database.Postgresql.Native.Types,
+                       Database.Postgresql.Native.Utils,
+                       Database.Postgresql.Native.Utils.PgPass
+  other-modules:       Database.Postgresql.Native.Message.Deserialization,
+                       Database.Postgresql.Native.Message.Serialization,
+                       Database.Postgresql.Native.Types.Deserialization,
+                       Database.Postgresql.Native.Types.Serialization,
+                       Database.Postgresql.Native.Utils.PgPass.PermissionFailReason,
+                       Database.Postgresql.Native.Utils.SizedBuilder
   other-extensions:    DeriveDataTypeable
   build-depends:       base >=4.7 && <4.8,
-                       bytestring >=0.10 && <0.11,
-                       base16-bytestring >=0.1 && <0.2,
-                       network >=2.6 && <2.7,
                        attoparsec >=0.12 && <0.13,
                        attoparsec-binary >=0.2 && <0.3,
-                       vector >=0.10 && <0.11,
+                       base16-bytestring >=0.1 && <0.2,
+                       bytestring >=0.10 && <0.11,
                        Crypto >=4.2 && <4.3,
-                       data-default-class >=0.0 && <0.1
+                       data-default-class >=0.0 && <0.1,
+                       network >=2.6 && <2.7,
+                       text >=1.2 && <1.3,
+                       vector >=0.10 && <0.11
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -O2
   if !os(windows)
-    exposed-modules:   Database.Postgresql.Native.Utils.PgPass.Unix,
-                       Database.Postgresql.Native.Connection.UnixDomainSocket
+    exposed-modules:   Database.Postgresql.Native.Connection.UnixDomainSocket
+    other-modules:     Database.Postgresql.Native.Utils.PgPass.Unix
     build-depends:     unix >=2.7 && <2.8
     cpp-options:       -DPGN_HAVE_UNIX_DOMAIN_SOCKETS
                        -DPGN_HAVE_STAT
