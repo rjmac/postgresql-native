@@ -8,6 +8,7 @@ module Database.Postgresql.Native.Message.Deserialization (
 , sslResponseLength
 ) where
 
+import Data.ByteString (ByteString)
 import Data.Attoparsec.ByteString as AP
 import qualified Data.Attoparsec.ByteString.Char8 as C8
 import Data.Vector (Vector, generate, unsafeIndex)
@@ -118,23 +119,13 @@ parseCopyBothResponse :: Parser FromBackend
 parseCopyBothResponse = CopyBothResponse <$> formatCode8 <*> listOf formatCode16 <?> "copy both response"
 
 parseDataRow :: Parser FromBackend
-parseDataRow = DataRow <$> listOf col <?> "data row"
-    where col = do
-            i <- anyWord32be
-            if i == -1
-            then return Nothing
-            else Just <$> AP.take (fromIntegral i)
+parseDataRow = DataRow <$> listOf nullableByteString <?> "data row"
 
 parseEmptyQueryResponse :: Parser FromBackend
 parseEmptyQueryResponse = pure EmptyQueryResponse <?> "empty query response"
 
 parseFunctionCallResponse :: Parser FromBackend
-parseFunctionCallResponse = FunctionCallResponse <$> res <?> "function call response"
-    where res = do
-            n <- anyWord32be
-            if n == -1
-            then return Nothing
-            else Just <$> AP.take (fromIntegral n)
+parseFunctionCallResponse = FunctionCallResponse <$> nullableByteString <?> "function call response"
 
 parseNoData :: Parser FromBackend
 parseNoData = pure NoData <?> "no data"
@@ -163,3 +154,10 @@ listOf :: Parser a -> Parser [a]
 listOf p = do
   n <- anyWord16be
   count (fromIntegral n) p
+
+nullableByteString :: Parser (Maybe ByteString)
+nullableByteString = do
+  i <- anyWord32be
+  if i == -1
+  then return Nothing
+  else Just <$> AP.take (fromIntegral i)
