@@ -3,7 +3,12 @@
 module Database.Postgresql.Native.Utils.PgPass (
   PermissionFailReason(..)
 , ConnectSpec(..)
+, parsePgPass
 , readPgPass
+, readPgPass'
+, passwordFor
+, pgPassFile
+, lookupPassword
 ) where
 
 -- This should really use Parsec or even a hand-rolled parser instead
@@ -16,6 +21,10 @@ import Data.Text as T
 import Data.Text.IO as T
 import Data.Attoparsec.Text as AP
 import Control.Applicative
+import Data.List as L
+import System.Directory (getHomeDirectory) -- TODO: Use SHGetFolderPath on windows and System.Posix.User on *nix
+import System.FilePath ((</>))
+import System.Environment (lookupEnv)
 
 #ifdef PGN_HAVE_STAT
 import Database.Postgresql.Native.Utils.PgPass.Unix
@@ -36,11 +45,11 @@ data ConnectSpec = ConnectSpec { hostname :: Maybe Text
 data Line = Comment | Spec ConnectSpec | Blank
           deriving (Show)
 
-parseComment :: Parser Line
-parseComment = skipWhile isLinearSpace *> char '#' *> skipWhile (/= '\n') *> pure Comment
+commentParser :: Parser Line
+commentParser = skipWhile isLinearSpace *> char '#' *> skipWhile (/= '\n') *> pure Comment
 
-parseSegment :: Parser Text
-parseSegment = trim <$> pack <$> many segmentChar
+segmentParser :: Parser Text
+segmentParser = trim <$> pack <$> many segmentChar
     where segmentChar = do
             c <- satisfy notEndOfSegment
             if c == '\\'
@@ -60,27 +69,27 @@ isDigit c = '0' <= c && c <= '9'
 isLinearSpace :: Char -> Bool
 isLinearSpace c = isSpace c && c /= '\n'
 
-parseBlank :: Parser Line
-parseBlank = skipWhile isLinearSpace *> pure Blank
+blankParser :: Parser Line
+blankParser = skipWhile isLinearSpace *> pure Blank
 
-parseBlank1 :: Parser Line
-parseBlank1 = satisfy isLinearSpace *> parseBlank
+blank1Parser :: Parser Line
+blank1Parser = satisfy isLinearSpace *> blankParser
 
-parseHostName :: Parser (Maybe Text)
-parseHostName = wildcardable parseSegment
+hostNameParser :: Parser (Maybe Text)
+hostNameParser = wildcardable segmentParser
 
-parseUserName :: Parser (Maybe Text)
-parseUserName = wildcardable parseSegment
+userNameParser :: Parser (Maybe Text)
+userNameParser = wildcardable segmentParser
 
-parseDatabase :: Parser (Maybe Text)
-parseDatabase = wildcardable parseSegment
+databaseParser :: Parser (Maybe Text)
+databaseParser = wildcardable segmentParser
 
-parsePassword :: Parser Text
-parsePassword = parseSegment
+passwordParser :: Parser Text
+passwordParser = segmentParser
 
-parsePort :: Parser (Maybe Int)
-parsePort = wildcardable $ do
-  segment <- parseSegment
+portParser :: Parser (Maybe Int)
+portParser = wildcardable $ do
+  segment <- segmentParser
   case T.span isDigit segment of
     (digits, "") -> return $ read $ unpack digits
     _ -> fail "Non-digit in port"
@@ -88,31 +97,53 @@ parsePort = wildcardable $ do
 wildcardable :: Parser a -> Parser (Maybe a)
 wildcardable p = parseWildcard <|> (Just <$> p)
     where parseWildcard = do
-            s <- parseSegment
+            s <- segmentParser
             if s == "*"
             then return Nothing
             else fail "wildcard"
 
-parseSpec :: Parser ConnectSpec
-parseSpec = ConnectSpec <$> (parseHostName <* char ':') <*> (parsePort <* char ':') <*> (parseDatabase <* char ':') <*> (parseUserName <* char ':') <*> parsePassword
+specParser :: Parser ConnectSpec
+specParser = ConnectSpec <$> (hostNameParser <* char ':') <*> (portParser <* char ':') <*> (databaseParser <* char ':') <*> (userNameParser <* char ':') <*> passwordParser
 
-parseLine :: Parser Line
-parseLine = parsePreEof <|> parseAtEof <?> "line"
-    where parsePreEof = (parseComment <|> (Spec <$> parseSpec) <|> parseBlank) <* endOfLine
-          parseAtEof = (parseComment <|> (Spec <$> parseSpec) <|> parseBlank1) <* endOfInput
+lineParser :: Parser Line
+lineParser = preEofParser <|> atEofParser <?> "line"
+    where preEofParser = (commentParser <|> (Spec <$> specParser) <|> blankParser) <* endOfLine
+          atEofParser = (commentParser <|> (Spec <$> specParser) <|> blank1Parser) <* endOfInput
 
-parsePgPass :: Parser [Line]
-parsePgPass = many parseLine <* endOfInput
+pgPassParser :: Parser [Line]
+pgPassParser = many lineParser <* endOfInput
 
-readPgPass :: FilePath -> IO (Either PermissionFailReason (Either String [ConnectSpec]))
-readPgPass f = (checkPermissions f >>= \case
+parsePgPass :: Text -> Either String [ConnectSpec]
+parsePgPass = fmap extractSpec . parseOnly pgPassParser
+    where extractSpec ls = [spec | Spec spec <- ls]
+
+readPgPass' :: FilePath -> IO (Either PermissionFailReason Text)
+readPgPass' f = (checkPermissions f >>= \case
                   Left err -> return $ Left err
-                  Right () ->
-                      Right <$> fmap extractSpec <$> parseOnly parsePgPass <$> T.readFile f
-                          where extractSpec ls = [spec | Spec spec <- ls]) `catch` ioErrors
+                  Right () -> Right <$> T.readFile f) `catch` ioErrors
     where ioErrors e =
               if isDoesNotExistError e
               then return $ Left DoesNotExist
               else if isPermissionError e
                    then return $ Left PermissionsTooTight
                    else throwIO e
+
+readPgPass :: FilePath -> IO Text
+readPgPass = fmap (either (const "") id) . readPgPass'
+
+passwordFor :: Text -> Int -> Text -> Text -> [ConnectSpec] -> Maybe Text
+passwordFor targetHost targetPort targetDatabase targetUser cs = password <$> L.find conforms cs
+    where conforms (ConnectSpec h p d u _) = accepts targetHost h && accepts targetPort p && accepts targetDatabase d && accepts targetUser u
+          accepts _ Nothing = True
+          accepts a (Just b) = a == b
+
+pgPassFile :: IO FilePath
+pgPassFile = lookupEnv "PGPASSFILE" >>= \case
+               Just f -> return f
+               Nothing -> (</> ".pgpass") <$> getHomeDirectory
+
+lookupPassword :: Text -> Int -> Text -> Text -> IO (Maybe Text)
+lookupPassword h p d u = pgPassFile >>= readPgPass >>= \t ->
+                           case parsePgPass t of
+                             Left _ -> return Nothing
+                             Right cs -> return $ passwordFor h p d u cs
