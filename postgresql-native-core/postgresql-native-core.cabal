@@ -24,6 +24,7 @@ library
                        Database.Postgresql.Native.Transport,
                        Database.Postgresql.Native.Types,
                        Database.Postgresql.Native.Utils,
+                       Database.Postgresql.Native.Utils.MD5Auth,
                        Database.Postgresql.Native.Utils.PgPass
   other-modules:       Database.Postgresql.Native.Message.Deserialization,
                        Database.Postgresql.Native.Message.Serialization,
