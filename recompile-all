@@ -1,6 +1,7 @@
 #!/bin/sh
 
 set -e
+set -x
 
 cd sandbox
 cabal sandbox hc-pkg unregister postgresql-native-connection || true
@@ -9,18 +10,21 @@ cd ..
 
 cd postgresql-native-core
 cabal clean
+cabal install --only-dependencies --enable-documentation --haddock-internal --haddock-hyperlink-source
 cabal configure
-cabal install
+cabal install --enable-documentation --haddock-internal --haddock-hyperlink-source
 cd ..
 cd postgresql-native-connection
 cabal clean
+cabal install --only-dependencies --enable-documentation --haddock-internal --haddock-hyperlink-source
 cabal configure
-cabal install
+cabal install --enable-documentation --haddock-internal --haddock-hyperlink-source
 cd ..
 cd postgresql-native-openssl
 cabal clean
+cabal install --only-dependencies --enable-documentation --haddock-internal --haddock-hyperlink-source
 cabal configure
-cabal install
+cabal install --enable-documentation --haddock-internal --haddock-hyperlink-source
 cd ..
 cd scratch
 cabal clean
