@@ -22,7 +22,13 @@ import Data.Text.IO as T
 import Data.Attoparsec.Text as AP
 import Control.Applicative
 import Data.List as L
-import System.Directory (getHomeDirectory) -- TODO: Use SHGetFolderPath on windows and System.Posix.User on *nix
+#ifdef PGN_HAVE_SHGETFOLDERPATH
+import Database.Postgresql.Native.Utils.Windows (getConfigDir)
+#elif PGN_HAVE_PWENT
+import Database.Postgresql.Native.Utils.Unix (getConfigDir)
+#else
+#error "Not windows or unix?"
+#endif
 import System.FilePath ((</>))
 import System.Environment (lookupEnv)
 
@@ -137,13 +143,16 @@ passwordFor targetHost targetPort targetDatabase targetUser cs = password <$> L.
           accepts _ Nothing = True
           accepts a (Just b) = a == b
 
-pgPassFile :: IO FilePath
+pgPassFile :: IO (Maybe FilePath)
 pgPassFile = lookupEnv "PGPASSFILE" >>= \case
-               Just f -> return f
-               Nothing -> (</> ".pgpass") <$> getHomeDirectory
+               Just f -> return $ Just f
+               Nothing -> (fmap.fmap) (</> ".pgpass") getConfigDir
 
 lookupPassword :: Text -> Int -> Text -> Text -> IO (Maybe Text)
-lookupPassword h p d u = pgPassFile >>= readPgPass >>= \t ->
-                           case parsePgPass t of
-                             Left _ -> return Nothing
-                             Right cs -> return $ passwordFor h p d u cs
+lookupPassword h p d u = pgPassFile >>= \case
+                           Just file -> readPgPass file >>= \t ->
+                             case parsePgPass t of
+                               Left _ -> return Nothing
+                               Right cs -> return $ passwordFor h p d u cs
+                           Nothing ->
+                               return Nothing
