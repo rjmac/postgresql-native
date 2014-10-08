@@ -22,20 +22,15 @@ import Data.Text.IO as T
 import Data.Attoparsec.Text as AP
 import Control.Applicative
 import Data.List as L
-#ifdef PGN_HAVE_SHGETFOLDERPATH
-import Database.Postgresql.Native.Utils.Windows (getConfigDir)
-#elif PGN_HAVE_PWENT
-import Database.Postgresql.Native.Utils.Unix (getConfigDir)
-#else
-#error "Not windows or unix?"
-#endif
 import System.FilePath ((</>))
 import System.Environment (lookupEnv)
 
-#ifdef PGN_HAVE_STAT
+#if PGN_UNIX
+import Database.Postgresql.Native.Utils.Unix (getConfigDir)
 import Database.Postgresql.Native.Utils.PgPass.Unix
 #else
-import Database.Postgresql.Native.Utils.PgPass.PermissionFailReason
+import Database.Postgresql.Native.Utils.Windows (getConfigDir)
+import Database.Postgresql.Native.Utils.PgPass.Windows
 
 checkPermissions :: Handle -> IO (Either PermissionFailReason ())
 checkPermissions = return $ Right ()

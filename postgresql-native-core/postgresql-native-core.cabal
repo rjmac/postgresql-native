@@ -54,9 +54,8 @@ library
     other-modules:     Database.Postgresql.Native.Utils.PgPass.Unix,
                        Database.Postgresql.Native.Utils.Unix
     build-depends:     unix >=2.7 && <2.8
-    cpp-options:       -DPGN_HAVE_UNIX_DOMAIN_SOCKETS
-                       -DPGN_HAVE_STAT
-                       -DPGN_HAVE_PWENT
+    cpp-options:       -DPGN_UNIX=1
   else
-    other-modules:     Database.Postgresql.Native.Utils.Windows
-    cpp-options:       -DPGN_HAVE_SHGETFOLDERPATH
+    other-modules:     Database.Postgresql.Native.Utils.PgPass.Windows,
+                       Database.Postgresql.Native.Utils.Windows
+    cpp-options:       -DPGN_UNIX=0
