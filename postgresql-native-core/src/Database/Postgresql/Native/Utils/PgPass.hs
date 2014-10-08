@@ -138,16 +138,13 @@ passwordFor targetHost targetPort targetDatabase targetUser cs = password <$> L.
           accepts _ Nothing = True
           accepts a (Just b) = a == b
 
-pgPassFile :: IO (Maybe FilePath)
+pgPassFile :: IO FilePath
 pgPassFile = lookupEnv "PGPASSFILE" >>= \case
-               Just f -> return $ Just f
-               Nothing -> (fmap.fmap) (</> ".pgpass") getConfigDir
+               Just f -> return f
+               Nothing -> (</> ".pgpass") <$> getConfigDir
 
 lookupPassword :: Text -> Int -> Text -> Text -> IO (Maybe Text)
-lookupPassword h p d u = pgPassFile >>= \case
-                           Just file -> readPgPass file >>= \t ->
-                             case parsePgPass t of
-                               Left _ -> return Nothing
-                               Right cs -> return $ passwordFor h p d u cs
-                           Nothing ->
-                               return Nothing
+lookupPassword h p d u = pgPassFile >>= readPgPass >>= \t ->
+                           case parsePgPass t of
+                             Left _ -> return Nothing
+                             Right cs -> return $ passwordFor h p d u cs

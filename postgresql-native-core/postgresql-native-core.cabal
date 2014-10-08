@@ -58,4 +58,5 @@ library
   else
     other-modules:     Database.Postgresql.Native.Utils.PgPass.Windows,
                        Database.Postgresql.Native.Utils.Windows
+    build-depends:     win32 >=2.3 && <2.4
     cpp-options:       -DPGN_UNIX=0
