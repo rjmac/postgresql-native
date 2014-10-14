@@ -16,7 +16,11 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Database.Postgresql.Native.Connection,
+  exposed-modules:     Database.Postgresql.Native.Authenticator,
+                       -- Internal is visible so GSSAPI etc can be implemented in other packages
+                       Database.Postgresql.Native.Authenticator.Internal,
+                       Database.Postgresql.Native.Client,
+                       Database.Postgresql.Native.Connection,
                        Database.Postgresql.Native.Connection.TCPSocket,
                        Database.Postgresql.Native.Connection.Tracing,
                        Database.Postgresql.Native.Message,

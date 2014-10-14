@@ -9,6 +9,7 @@ module Database.Postgresql.Native.Transport (
 , closeRudely
 , canMakeSSL
 , makeSSL
+, nextMessage
 , receiveMessage
 , receiveSSLResponse
 , sendMessage
@@ -16,7 +17,7 @@ module Database.Postgresql.Native.Transport (
 , sendSCMCredentials
 ) where
 
-import Control.Exception (bracketOnError, throwIO)
+import Control.Exception (throwIO)
 import Control.Applicative ((<$>),(<*))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad (when)
@@ -32,11 +33,6 @@ import Database.Postgresql.Native.Message (FromBackend, FromFrontend, InitialMes
 import Database.Postgresql.Native.Message.Serialization (serialize, serializeInitial)
 import Database.Postgresql.Native.Message.Deserialization
 import qualified Database.Postgresql.Native.Connection as C
-#ifdef NO_UNIX_DOMAIN_SOCKETS
-import qualified Database.Postgresql.Native.Connection.TCPSocket as TCP
-#else
-import qualified Database.Postgresql.Native.Connection.UnixDomainSocket as UDS
-#endif
 import Data.Default.Class (Default, def)
 
 data Transport = Transport { tSettings :: TransportSettings
@@ -44,22 +40,13 @@ data Transport = Transport { tSettings :: TransportSettings
                            , tRemainingRef :: IORef ByteString }
 
 data TransportSettings = TransportSettings {
-      createConnection :: IO C.Connection
-    , bufSize :: Int
+      bufSize :: Int
     , maxPacketSize :: Word32
     , trace :: String -> IO ()
     }
 
-defaultOpen :: IO C.Connection
-#ifdef NO_UNIX_DOMAIN_SOCKETS
-defaultOpen = TCP.connect "localhost" 5432
-#else
-defaultOpen = UDS.connect "/var/run/postgresql/.s.PGSQL.5432"
-#endif
-
 instance Default TransportSettings where
-    def = TransportSettings { createConnection = defaultOpen
-                            , bufSize = 4096
+    def = TransportSettings { bufSize = 4096
                             , maxPacketSize = 1024*1024
                             , trace = const $ return ()
                             }
@@ -67,10 +54,8 @@ instance Default TransportSettings where
 sendSCMCredentials :: Transport -> IO ()
 sendSCMCredentials Transport{tConn} = fromMaybe (error "Cannot send SCM credentials over connection") $ C.sendSCMCredentials tConn
 
-open :: TransportSettings -> IO Transport
-open ts@TransportSettings{..} =
-    bracketOnError createConnection C.closeRudely new
-        where new c = Transport ts c <$> newIORef BS.empty
+open :: C.Connection -> TransportSettings -> IO Transport
+open c ts@TransportSettings{..} = Transport ts c <$> newIORef BS.empty
 
 available :: Transport -> IO Word32
 available Transport{tRemainingRef} = (fromIntegral . BS.length) <$> readIORef tRemainingRef
@@ -174,6 +159,10 @@ receiveMessage t@Transport{tSettings} =
     Nothing ->
         do trace tSettings "-->  [end of input]"
            return Nothing
+
+-- | Like 'receiveMessage' but throws 'UnexpectedEnfOfInput' if the socket is closed
+nextMessage :: Transport -> IO FromBackend
+nextMessage t = receiveMessage t >>= maybe (throwIO UnexpectedEndOfInput) return 
 
 receiveSSLResponse :: Transport -> IO SSLResponse
 receiveSSLResponse t@Transport{tSettings} = do
