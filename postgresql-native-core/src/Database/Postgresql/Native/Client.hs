@@ -43,13 +43,16 @@ data State = Closed
            -- received.
            | ReceivingRows
            -- ^ A 'RowDescription' message was received but not yet a
-           -- subsequent 'ReadyForQuery'.
+           -- subsequent 'CommandComplete'.
            | CopyIn
            -- ^ A 'CopyinResponse' message has been received but not
-           -- yet a subsequent 'ReadyForQuery'.
+           -- yet a subsequent 'CommandComplete'.
            | CopyOut
            -- ^ A 'CopyOutResponse' message has been received but not
-           -- yet a subsequent 'ReadyForQuery'.
+           -- yet a subsequent 'CommandComplete'.
+           | ResponseReceived
+           -- ^ A 'CommandComplete' message has been received but not
+           -- yet either 'ReadyForQuery' or more responses.
              deriving (Read, Show, Eq, Ord, Enum, Bounded)
 
 data Client = Client { clientState :: IORef State
