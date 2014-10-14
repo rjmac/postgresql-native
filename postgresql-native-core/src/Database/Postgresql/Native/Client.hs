@@ -27,7 +27,7 @@ import Database.Postgresql.Native.Transport (Transport)
 import qualified Database.Postgresql.Native.Transport as T
 import Database.Postgresql.Native.Message
 import Database.Postgresql.Native.ProtocolError (ProtocolError(UnexpectedMessage))
-import Database.Postgresql.Native.Types (ByteString0, MessageField)
+import Database.Postgresql.Native.Types (ByteString0, MessageField, AuthResultCode)
 
 data State = Closed
            -- ^ The 'Client' has been closed and can no longer be
@@ -64,8 +64,7 @@ data ClientSettings = ClientSettings { connectionProvider :: IO Connection
                                      , authenticator :: Authenticator }
 
 data ConnectionFailure = SSLNotSupportedByServer
-                       | BadCredsType
-                       | UnsupportedAuthenticationRequirement
+                       | UnsupportedAuthenticationRequirement AuthResultCode
                        -- ^ The server demanded an authentication
                        -- method that the provided 'Authenticator' is
                        -- not willing to handle.
@@ -120,7 +119,7 @@ login t usr initdb (Authenticator auth) = do
     AuthenticationResponse code ->
         case auth code of
           Just op -> op t usr
-          Nothing -> throwIO BadCredsType
+          Nothing -> throwIO $ UnsupportedAuthenticationRequirement code
     ErrorResponse c -> error $ show c -- TODO: I need errors!
     other -> throwIO $ UnexpectedMessage other
 

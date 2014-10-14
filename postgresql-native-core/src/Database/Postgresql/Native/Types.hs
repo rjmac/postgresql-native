@@ -80,6 +80,7 @@ data AuthResultCode = AuthOK -- 0
                     | GSS -- 7
                     | SSPI -- 9
                     | GSSContinue ByteString -- 8
+                    | UnknownAuthCode Word32 ByteString
                       deriving (Show, Read, Eq, Ord)
 
 newtype ServerPid = ServerPid Word32

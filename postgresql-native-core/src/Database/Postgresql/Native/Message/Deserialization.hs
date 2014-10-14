@@ -80,7 +80,7 @@ parseAuthResponse = AuthenticationResponse <$> (anyWord32be >>= decodeTyp) <?> "
           decodeTyp 7 = return GSS
           decodeTyp 9 = return SSPI
           decodeTyp 8 = GSSContinue <$> takeByteString
-          decodeTyp other = fail $ "unknown auth response type " ++ show other
+          decodeTyp other = UnknownAuthCode other <$> takeByteString
 
 parseParameterStatus :: Parser FromBackend
 parseParameterStatus = ParameterStatus <$> parameterName <*> bytestring0 <?> "parameter status"
