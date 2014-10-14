@@ -30,12 +30,26 @@ import Database.Postgresql.Native.ProtocolError (ProtocolError(UnexpectedMessage
 import Database.Postgresql.Native.Types (ByteString0, MessageField)
 
 data State = Closed
+           -- ^ The 'Client' has been closed and can no longer be
+           -- used.
            | Broken
+           -- ^ A fatal error has been received, but the 'Client' is
+           -- not yet actually closed.
            | Idle
+           -- ^ The connection is healthy and the 'Client' has no
+           -- operations in progress.
            | AwaitingResponse
+           -- ^ A query has been sent but no response has yet been
+           -- received.
            | ReceivingRows
+           -- ^ A 'RowDescription' message was received but not yet a
+           -- subsequent 'ReadyForQuery'.
            | CopyIn
+           -- ^ A 'CopyinResponse' message has been received but not
+           -- yet a subsequent 'ReadyForQuery'.
            | CopyOut
+           -- ^ A 'CopyOutResponse' message has been received but not
+           -- yet a subsequent 'ReadyForQuery'.
              deriving (Read, Show, Eq, Ord, Enum, Bounded)
 
 data Client = Client { clientState :: IORef State
@@ -52,6 +66,9 @@ data ClientSettings = ClientSettings { connectionProvider :: IO Connection
 data ConnectionFailure = SSLNotSupportedByServer
                        | BadCredsType
                        | UnsupportedAuthenticationRequirement
+                       -- ^ The server demanded an authentication
+                       -- method that the provided 'Authenticator' is
+                       -- not willing to handle.
                        | ConnectionRejected [(MessageField, ByteString0)]
                          deriving (Show, Typeable)
 instance Exception ConnectionFailure
