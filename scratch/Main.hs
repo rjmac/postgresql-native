@@ -52,7 +52,7 @@ createNCConnection ctx = CC.connect ctx NC.ConnectionParams {
 main :: IO ()
 main = withOpenSSL $ forkAndWait $ bracketOnError (initOSSLCtx >>= open) Client.closeRudely go
     where open ctx =
-              Client.connectEx Client.ClientSettings { Client.connection = createConnection ctx
+              Client.connectEx Client.ClientSettings { Client.connectionProvider = createConnection ctx
                                                      , Client.username = "pgnative"
                                                      , Client.initialDatabase = "pgnative_test"
                                                      , Client.authenticator = auth

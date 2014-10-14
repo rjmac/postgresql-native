@@ -44,7 +44,7 @@ data Client = Client { clientState :: IORef State
                      , optionalClientSettings :: OptionalClientSettings
                      }
 
-data ClientSettings = ClientSettings { connection :: IO Connection
+data ClientSettings = ClientSettings { connectionProvider :: IO Connection
                                      , username :: ByteString0
                                      , initialDatabase :: ByteString0
                                      , authenticator :: Authenticator }
@@ -75,7 +75,7 @@ connect cs = connectEx cs def
 
 connectEx :: ClientSettings -> OptionalClientSettings -> IO Client
 connectEx clientSettings@ClientSettings{..} optionalClientSettings@OptionalClientSettings{..} =
-    bracketOnError connection C.closeRudely go
+    bracketOnError connectionProvider C.closeRudely go
         where go conn = do
                 transport <- T.open conn transportSettings
                 maybeUpgrade transport
