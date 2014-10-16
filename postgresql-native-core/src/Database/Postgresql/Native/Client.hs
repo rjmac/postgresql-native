@@ -18,7 +18,7 @@ module Database.Postgresql.Native.Client (
 
 import Control.Exception (Exception, bracketOnError, onException, mask_, throwIO)
 import Control.Monad (when)
-import Data.IORef (IORef, newIORef, writeIORef, readIORef)
+import Data.IORef (IORef, newIORef, writeIORef, readIORef, modifyIORef)
 import Data.Default.Class (Default, def)
 import Data.Typeable
 import qualified Data.Map.Strict as Map
@@ -185,7 +185,12 @@ sendMessage :: Client -> FromFrontend -> IO ()
 sendMessage Client{transport} msg = T.sendMessage transport msg
 
 nextMessage :: Client -> IO FromBackend
-nextMessage Client{transport} = T.nextMessage transport
+nextMessage Client{transport, sessionParameters} = do
+  msg <- T.nextMessage transport
+  case msg of
+    ParameterStatus p v -> modifyIORef sessionParameters $! Map.insert p v -- TODO: this might imply changing charsets, etc.
+    _ -> return ()
+  return msg
 
 parameter :: Client -> ParameterName -> IO (Maybe ByteString0)
 parameter Client{sessionParameters} pn = do
