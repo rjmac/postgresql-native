@@ -12,6 +12,8 @@ module Database.Postgresql.Native.Client (
 -- temporary methods until an actual API is set up
 , sendMessage
 , nextMessage
+-- Start of the actual API
+, parameter
 ) where
 
 import Control.Exception (Exception, bracketOnError, onException, mask_, throwIO)
@@ -19,6 +21,7 @@ import Control.Monad (when)
 import Data.IORef (IORef, newIORef, writeIORef, readIORef)
 import Data.Default.Class (Default, def)
 import Data.Typeable
+import qualified Data.Map.Strict as Map
 
 import Database.Postgresql.Native.Authenticator.Internal (Authenticator(..))
 import Database.Postgresql.Native.Connection (Connection)
@@ -27,7 +30,7 @@ import Database.Postgresql.Native.Transport (Transport)
 import qualified Database.Postgresql.Native.Transport as T
 import Database.Postgresql.Native.Message
 import Database.Postgresql.Native.ProtocolError (ProtocolError(UnexpectedMessage))
-import Database.Postgresql.Native.Types (ByteString0, MessageField, AuthResultCode)
+import Database.Postgresql.Native.Types
 
 data State = Closed
            -- ^ The 'Client' has been closed and can no longer be
@@ -55,16 +58,21 @@ data State = Closed
            -- yet either 'ReadyForQuery' or more responses.
              deriving (Read, Show, Eq, Ord, Enum, Bounded)
 
+data BackendKey = BackendKey ServerPid ServerKey
+
 data Client = Client { clientState :: IORef State
+                     , sessionParameters :: IORef (Map.Map ParameterName ByteString0)
+                     , backendKey :: BackendKey
                      , transport :: Transport
                      , clientSettings :: ClientSettings
                      , optionalClientSettings :: OptionalClientSettings
                      }
 
-data ClientSettings = ClientSettings { connectionProvider :: IO Connection
-                                     , username :: ByteString0
-                                     , initialDatabase :: ByteString0
-                                     , authenticator :: Authenticator }
+data ClientSettings =
+    ClientSettings { connectionProvider :: IO Connection
+                   , username :: ByteString0
+                   , initialDatabase :: ByteString0
+                   , authenticator :: Authenticator }
 
 data ConnectionFailure = SSLNotSupportedByServer
                        | UnsupportedAuthenticationRequirement AuthResultCode
@@ -84,10 +92,13 @@ instance Exception ConnectionFailure
 -- #endif
 
 -- Should this just be a Maybe field inside client settings?
-data OptionalClientSettings = OptionalClientSettings { transportSettings :: T.TransportSettings }
+data OptionalClientSettings =
+    OptionalClientSettings { transportSettings :: T.TransportSettings
+                           , applicationName :: ByteString0 }
 
 instance Default OptionalClientSettings where
-    def = OptionalClientSettings { transportSettings = def }
+    def = OptionalClientSettings { transportSettings = def
+                                 , applicationName = "" }
 
 connect :: ClientSettings -> IO Client
 connect cs = connectEx cs def
@@ -98,8 +109,10 @@ connectEx clientSettings@ClientSettings{..} optionalClientSettings@OptionalClien
         where go conn = do
                 transport <- T.open conn transportSettings
                 maybeUpgrade transport
-                login transport username initialDatabase authenticator
-                awaitIdle transport -- TODO: need to keep track of settings, client keys, etc.
+                login transport username initialDatabase applicationName authenticator
+                (sessionParametersValue, backendKey) <- receiveSessionData transport
+                print sessionParametersValue
+                sessionParameters <- newIORef sessionParametersValue
                 clientState <- newIORef Idle
                 return Client {..}
 
@@ -113,11 +126,13 @@ maybeUpgrade t =
         SSLNotOK -> throwIO SSLNotSupportedByServer
         SSLFatal -> throwIO SSLNotSupportedByServer
 
-login :: T.Transport -> ByteString0 -> ByteString0 -> Authenticator -> IO ()
-login t usr initdb (Authenticator auth) = do
+login :: T.Transport -> ByteString0 -> ByteString0 -> ByteString0 -> Authenticator -> IO ()
+login t usr initdb appName (Authenticator auth) = do
   T.sendInitialMessage t $ StartupMessage [("user",usr)
                                           ,("database",initdb)
-                                          ,("DateStyle","ISO, MDY")]
+                                          ,("DateStyle","ISO, MDY")
+                                          ,("client_encoding","UTF8")
+                                          ,("application_name",appName)]
   T.nextMessage t >>= \case
     AuthenticationResponse code ->
         case auth code of
@@ -126,11 +141,15 @@ login t usr initdb (Authenticator auth) = do
     ErrorResponse c -> error $ show c -- TODO: I need errors!
     other -> throwIO $ UnexpectedMessage other
 
-awaitIdle :: T.Transport -> IO ()
-awaitIdle t =
-  T.nextMessage t >>= \case
-    ReadyForQuery _ -> return ()
-    _ -> awaitIdle t
+receiveSessionData :: T.Transport -> IO (Map.Map ParameterName ByteString0, BackendKey)
+receiveSessionData t = go Map.empty Nothing
+    where go sessionParameters backendKey = T.nextMessage t >>= \case
+            ParameterStatus param value -> go (Map.insert param value sessionParameters) backendKey
+            BackendKeyData p k -> go sessionParameters (Just $ BackendKey p k)
+            ReadyForQuery _ -> return (sessionParameters, maybe (error "TODO no backend key") id backendKey)
+            ErrorResponse c -> error $ show c -- TODO
+            NoticeResponse c -> error $ show c -- TODO
+            other -> throwIO $ UnexpectedMessage other
 
 withMessageDrain :: Client -> IO a -> IO a
 withMessageDrain c a = a -- TODO: actually drain messages
@@ -167,3 +186,8 @@ sendMessage Client{transport} msg = T.sendMessage transport msg
 
 nextMessage :: Client -> IO FromBackend
 nextMessage Client{transport} = T.nextMessage transport
+
+parameter :: Client -> ParameterName -> IO (Maybe ByteString0)
+parameter Client{sessionParameters} pn = do
+  currentParams <- readIORef sessionParameters
+  return $ Map.lookup pn currentParams

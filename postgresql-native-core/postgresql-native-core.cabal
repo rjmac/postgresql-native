@@ -42,6 +42,7 @@ library
                        attoparsec-binary >=0.2 && <0.3,
                        base16-bytestring >=0.1 && <0.2,
                        bytestring >=0.10 && <0.11,
+                       containers >=0.5 && <0.6,
                        Crypto >=4.2 && <4.3,
                        data-default-class >=0.0 && <0.1,
                        directory >= 1.2 && <1.3,

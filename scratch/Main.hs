@@ -57,14 +57,19 @@ main = withOpenSSL $ forkAndWait $ bracketOnError (initOSSLCtx >>= open) Client.
                                                      , Client.initialDatabase = "pgnative_test"
                                                      , Client.authenticator = auth
                                                      }
-                               Client.OptionalClientSettings { Client.transportSettings =
-                                                                   def { T.trace = putStrLn } }
+                               def { Client.transportSettings = def { T.trace = putStrLn } }
           createConnection ctx = bracketOnError (createOSSLConnection ctx)
                                                 C.closeRudely
                                                 (trace putStrLn)
           auth = defaultAuthenticator <> passwordAuthenticator "pgnative"
           go cli = do
             Client.sendMessage cli $ Query "select * from three_rows"
+            awaitRFQ cli
+
+            Client.sendMessage cli $ Query "copy three_rows to stdout csv"
+            awaitRFQ cli
+
+            Client.sendMessage cli $ Query "copy three_rows to stdout binary"
             awaitRFQ cli
 
             Client.sendMessage cli $ Query "LISTEN gnu"
