@@ -4,6 +4,13 @@ module Database.Postgresql.Native.Types (
 , newByteString0
 , unsafeNewByteString0
 
+, ShortByteString0
+, toShort0
+, fromShort0
+, toShortByteString
+, newShortByteString0
+, unsafeNewShortByteString0
+
 , MessageField
 , PortalName(..) -- SC
 , PreparedStatementName(..) -- SC
@@ -22,6 +29,8 @@ module Database.Postgresql.Native.Types (
 
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Short as SBS
+import Data.ByteString.Short (ShortByteString)
 import Data.Monoid
 import Data.String
 import Data.Word (Word16, Word32)
@@ -38,18 +47,18 @@ instance Read ByteString0 where
     readsPrec i = map bsify1 . readsPrec i
     readList = map bsifyn . readList
 
+bsify1 :: (ByteString, String) -> (ByteString0, String)
+bsify1 (bs, s) = (newByteString0 bs, s)
+
+bsifyn :: ([ByteString], String) -> ([ByteString0], String)
+bsifyn (bss, s) = (map newByteString0 bss, s)
+
 instance Monoid ByteString0 where
     mempty = unsafeNewByteString0 BS.empty
     mappend (ByteString0 a) (ByteString0 b) = unsafeNewByteString0 (a <> b)
 
 instance IsString ByteString0 where
     fromString = newByteString0 . fromString
-
-bsify1 :: (ByteString, String) -> (ByteString0, String)
-bsify1 (bs, s) = (newByteString0 bs, s)
-
-bsifyn :: ([ByteString], String) -> ([ByteString0], String)
-bsifyn (bss, s) = (map newByteString0 bss, s)
 
 toByteString :: ByteString0 -> ByteString
 toByteString (ByteString0 bs) = bs
@@ -59,6 +68,41 @@ unsafeNewByteString0 bs = ByteString0 bs
 
 newByteString0 :: ByteString -> ByteString0
 newByteString0 = unsafeNewByteString0 -- todo check for 0
+
+newtype ShortByteString0 = ShortByteString0 ShortByteString deriving (Eq, Ord)
+
+instance Show ShortByteString0 where
+    showsPrec i (ShortByteString0 bs) = showsPrec i bs
+    show (ShortByteString0 bs) = show bs
+    showList bss = showList $ map (toByteString . fromShort0) bss
+
+instance Read ShortByteString0 where
+    readsPrec i = map sbsify1 . readsPrec i
+    readList = map sbsifyn . readList
+
+instance IsString ShortByteString0 where
+    fromString = newShortByteString0 . fromString
+
+sbsify1 :: (ShortByteString, String) -> (ShortByteString0, String)
+sbsify1 (bs, s) = (newShortByteString0 bs, s)
+
+sbsifyn :: ([ShortByteString], String) -> ([ShortByteString0], String)
+sbsifyn (bss, s) = (map newShortByteString0 bss, s)
+
+toShortByteString :: ShortByteString0 -> ShortByteString
+toShortByteString (ShortByteString0 bs) = bs
+
+unsafeNewShortByteString0 :: ShortByteString -> ShortByteString0
+unsafeNewShortByteString0 bs = ShortByteString0 bs
+
+newShortByteString0 :: ShortByteString -> ShortByteString0
+newShortByteString0 = unsafeNewShortByteString0 -- todo check for 0
+
+toShort0 :: ByteString0 -> ShortByteString0
+toShort0 (ByteString0 bs) = ShortByteString0 $ SBS.toShort bs
+
+fromShort0 :: ShortByteString0 -> ByteString0
+fromShort0 (ShortByteString0 sbs) = ByteString0 $ SBS.fromShort sbs
 
 -- | Field codes are in <http://www.postgresql.org/docs/9.4/static/protocol-error-fields.html the manual>
 type MessageField = Char
