@@ -33,10 +33,12 @@ import Database.Postgresql.Native.Message (FromBackend, FromFrontend, InitialMes
 import Database.Postgresql.Native.Message.Serialization (serialize, serializeInitial)
 import Database.Postgresql.Native.Message.Deserialization
 import qualified Database.Postgresql.Native.Connection as C
+import Database.Postgresql.Native.Connection (Connection)
 import Data.Default.Class (Default, def)
 
+-- | A message-oriented layer atop a byte-oriented 'Connection'.
 data Transport = Transport { tSettings :: TransportSettings
-                           , tConn :: C.Connection
+                           , tConn :: Connection
                            , tRemainingRef :: IORef ByteString }
 
 data TransportSettings = TransportSettings {
@@ -54,7 +56,11 @@ instance Default TransportSettings where
 sendSCMCredentials :: Transport -> IO ()
 sendSCMCredentials Transport{tConn} = fromMaybe (error "Cannot send SCM credentials over connection") $ C.sendSCMCredentials tConn
 
-open :: C.Connection -> TransportSettings -> IO Transport
+-- | Wraps a 'Connection' in a message-oriented transport layer.  Once
+-- done, the 'Connection' itself should no longer be used, with the
+-- possible exception of a rude close in the event of an error before
+-- some higher level is finished initialization.
+open :: Connection -> TransportSettings -> IO Transport
 open c ts@TransportSettings{..} = Transport ts c <$> newIORef BS.empty
 
 available :: Transport -> IO Word32
@@ -80,19 +86,28 @@ clear :: Transport -> IO ()
 clear Transport { tRemainingRef } = do
   writeIORef tRemainingRef BS.empty
 
+-- | Secures the underlying 'Connection'; it is an error to call
+-- this if 'canMakeSSL' is not 'True'.
 makeSSL :: Transport -> IO ()
 makeSSL t@Transport{tConn} = do
   fromMaybe (error "Not an SSL-capable connection") $ C.makeSSL tConn
+  -- security: forget anything already in our buffer since it may have
+  -- been placed there by someone manipulating the unsecured TCP
+  -- packet that contained the "SSLOK" message.
   clear t
 
+-- | Test whether the underlying 'Connection' can be upgraded to SSL.
+-- Check this before trying to do the upgrade with 'makeSSL'.
 canMakeSSL :: Transport -> Bool
 canMakeSSL Transport{tConn} = isJust $ C.makeSSL tConn
 
+-- | Closes the underlying 'Connection' nicely.
 closeNicely :: Transport -> IO ()
 closeNicely t@Transport{tConn} = do
   C.closeNicely tConn
   clear t
 
+-- | Closes the underlying 'Connection' rudely.
 closeRudely :: Transport -> IO ()
 closeRudely t@Transport{tConn} = do
   C.closeRudely tConn
@@ -148,8 +163,19 @@ doConsume t@Transport{tRemainingRef} parser bytesStillWanted = do
       Done i r | BS.null i -> return r
                | otherwise -> error "non-empty leftovers?"
 
+-- | Await the next message.  If this is interrupted, the connection
+-- should be considered broken, as it is possible a message will have
+-- been partially consumed.
+-- 
+-- If an EOF is received /instead of/ the start of a new message,
+-- Nothing is returned.  An EOF in the middle of a message always
+-- throws 'UnexpectedEndOfInput'.
 receiveMessage :: Transport -> IO (Maybe FromBackend)
 receiveMessage t@Transport{tSettings} =
+  -- It would be possible to write this such that it would be tolerant of
+  -- async exceptions _if_ the underlying Connection is.  I'm not sure that
+  -- can be guaranteed, and so this will not even make the attempt in order
+  -- to prevent subtle bugs.
   consume t header headerLength >>= \case
     Just (packetType, packetLen) ->
         do when (packetLen > maxPacketSize tSettings) (throwIO PacketTooLarge)
@@ -160,7 +186,8 @@ receiveMessage t@Transport{tSettings} =
         do trace tSettings "-->  [end of input]"
            return Nothing
 
--- | Like 'receiveMessage' but throws 'UnexpectedEnfOfInput' if the socket is closed
+-- | Like 'receiveMessage' but always throws 'UnexpectedEndOfInput' if
+-- the socket is closed.
 nextMessage :: Transport -> IO FromBackend
 nextMessage t = receiveMessage t >>= maybe (throwIO UnexpectedEndOfInput) return 
 

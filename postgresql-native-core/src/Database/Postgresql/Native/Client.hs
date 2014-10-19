@@ -61,6 +61,10 @@ data State = Closed
 
 data BackendKey = BackendKey !ServerPid !ServerKey
 
+-- | A high-level connection to the database.  A 'Client' may be used
+-- from only one thread at a time (concurrent actions on a single
+-- 'Client' will block) with the exception that 'cancel' may be called
+-- at any time.
 data Client = Client { clientState :: IORef State
                      , sessionParameters :: IORef (Map.Map ParameterName ByteString0)
                      , backendKey :: !BackendKey
