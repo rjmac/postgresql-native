@@ -100,6 +100,13 @@ main = withOpenSSL $ forkAndWait $ bracketOnError (initOSSLCtx >>= open) Client.
             -- cmd "close p"
             -- cmd "rollback"
 
+            t <- forkIO $ do
+                     threadDelay 1000000
+                     Client.cancel cli
+
+            Client.sendMessage cli $ Query "select pg_sleep(10)"
+            awaitRFQ cli
+
             Client.closeNicely cli
 
 awaitRFQ :: Client.Client -> IO ()

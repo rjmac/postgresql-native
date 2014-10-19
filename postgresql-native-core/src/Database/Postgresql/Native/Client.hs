@@ -14,6 +14,7 @@ module Database.Postgresql.Native.Client (
 , nextMessage
 -- Start of the actual API
 , parameter
+, cancel
 ) where
 
 import Control.Exception (Exception, bracketOnError, onException, mask_, throwIO)
@@ -58,11 +59,11 @@ data State = Closed
            -- yet either 'ReadyForQuery' or more responses.
              deriving (Read, Show, Eq, Ord, Enum, Bounded)
 
-data BackendKey = BackendKey ServerPid ServerKey
+data BackendKey = BackendKey !ServerPid !ServerKey
 
 data Client = Client { clientState :: IORef State
                      , sessionParameters :: IORef (Map.Map ParameterName ByteString0)
-                     , backendKey :: BackendKey
+                     , backendKey :: !BackendKey
                      , transport :: Transport
                      , clientSettings :: ClientSettings
                      , optionalClientSettings :: OptionalClientSettings
@@ -196,3 +197,20 @@ parameter :: Client -> ParameterName -> IO (Maybe ByteString0)
 parameter Client{sessionParameters} pn = do
   currentParams <- readIORef sessionParameters
   return $ Map.lookup pn currentParams
+
+-- | Cancels an in-progress operation.  This creates a new connection
+-- to the database to perform the cancellation by re-using the 'IO'
+-- 'Connection' action originally provided in 'ClientSettings'.  In
+-- order to work correctly, that action must reconnect to the same
+-- server.
+cancel :: Client -> IO ()
+cancel Client{ backendKey = BackendKey serverPid serverKey
+             , clientSettings = ClientSettings{connectionProvider}
+             , optionalClientSettings = OptionalClientSettings{transportSettings} } =
+    bracketOnError connectionProvider C.closeRudely go
+        where go conn = do
+                t <- T.open conn transportSettings
+                maybeUpgrade t
+                T.sendInitialMessage t $ CancelRequest serverPid serverKey
+                T.receiveMessage t >>= maybe (return ()) (throwIO . UnexpectedMessage)
+                T.closeNicely t
