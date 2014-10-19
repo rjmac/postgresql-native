@@ -110,16 +110,15 @@ connect cs = connectEx cs def
 
 connectEx :: ClientSettings -> OptionalClientSettings -> IO Client
 connectEx clientSettings@ClientSettings{..} optionalClientSettings@OptionalClientSettings{..} =
-    bracketOnError connectionProvider C.closeRudely go
-        where go conn = do
-                transport <- T.open conn transportSettings
-                maybeUpgrade transport
-                login transport username initialDatabase applicationName authenticator
-                (sessionParametersValue, backendKey) <- receiveSessionData transport
-                print sessionParametersValue
-                sessionParameters <- newIORef sessionParametersValue
-                clientState <- newIORef Idle
-                return Client {..}
+    bracketOnError connectionProvider C.closeRudely $ \conn -> do
+      transport <- T.open conn transportSettings
+      maybeUpgrade transport
+      login transport username initialDatabase applicationName authenticator
+      (sessionParametersValue, backendKey) <- receiveSessionData transport
+      print sessionParametersValue
+      sessionParameters <- newIORef sessionParametersValue
+      clientState <- newIORef Idle
+      return Client {..}
 
 maybeUpgrade :: T.Transport -> IO ()
 maybeUpgrade t =
@@ -211,10 +210,9 @@ cancel :: Client -> IO ()
 cancel Client{ backendKey = BackendKey serverPid serverKey
              , clientSettings = ClientSettings{connectionProvider}
              , optionalClientSettings = OptionalClientSettings{transportSettings} } =
-    bracketOnError connectionProvider C.closeRudely go
-        where go conn = do
-                t <- T.open conn transportSettings
-                maybeUpgrade t
-                T.sendInitialMessage t $ CancelRequest serverPid serverKey
-                T.receiveMessage t >>= maybe (return ()) (throwIO . UnexpectedMessage)
-                T.closeNicely t
+    bracketOnError connectionProvider C.closeRudely $ \conn -> do
+      t <- T.open conn transportSettings
+      maybeUpgrade t
+      T.sendInitialMessage t $ CancelRequest serverPid serverKey
+      T.receiveMessage t >>= maybe (return ()) (throwIO . UnexpectedMessage)
+      T.closeNicely t
