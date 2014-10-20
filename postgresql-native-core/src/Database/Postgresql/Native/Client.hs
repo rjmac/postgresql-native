@@ -22,6 +22,7 @@ import Control.Monad (when)
 import Data.IORef (IORef, newIORef, writeIORef, readIORef, modifyIORef)
 import Data.Default.Class (Default, def)
 import Data.Typeable
+import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 
 import Database.Postgresql.Native.Authenticator.Internal (Authenticator(..))
@@ -150,7 +151,7 @@ receiveSessionData t = go Map.empty Nothing
     where go sessionParameters backendKey = T.nextMessage t >>= \case
             ParameterStatus param value -> go (Map.insert param value sessionParameters) backendKey
             BackendKeyData p k -> go sessionParameters (Just $ BackendKey p k)
-            ReadyForQuery _ -> return (sessionParameters, maybe (error "TODO no backend key") id backendKey)
+            ReadyForQuery _ -> return (sessionParameters, fromMaybe (error "TODO no backend key") backendKey)
             ErrorResponse c -> error $ show c -- TODO
             NoticeResponse c -> error $ show c -- TODO
             other -> throwIO $ UnexpectedMessage other
