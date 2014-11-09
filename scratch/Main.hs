@@ -51,13 +51,16 @@ createNCConnection ctx = CC.connect ctx NC.ConnectionParams {
 
 main :: IO ()
 main = withOpenSSL $ forkAndWait $ bracketOnError (initOSSLCtx >>= open) Client.closeRudely go
-    where open ctx =
-              Client.connectEx Client.ClientSettings { Client.connectionProvider = createConnection ctx
-                                                     , Client.username = "pgnative"
-                                                     , Client.initialDatabase = "pgnative_test"
-                                                     , Client.authenticator = auth
-                                                     }
-                               def { Client.transportSettings = def { T.trace = putStrLn } }
+    where open ctx = do
+            c <- Client.connectEx Client.ClientSettings { Client.connectionProvider = createConnection ctx
+                                                        , Client.username = "pgnative"
+                                                        , Client.initialDatabase = "pgnative_test"
+                                                        , Client.authenticator = auth
+                                                        }
+                                  def { Client.transportSettings = def { T.trace = putStrLn } }
+            case c of
+             Right client -> return client
+             Left e -> error $ show e
           createConnection ctx = bracketOnError (createOSSLConnection ctx)
                                                 C.closeRudely
                                                 (trace putStrLn)

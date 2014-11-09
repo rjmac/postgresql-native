@@ -25,6 +25,7 @@ module Database.Postgresql.Native.Types (
 , RowColumnDescription(..)
 , BoundParams (..)
 , ResultFormat (..)
+, ErrorData
 ) where
 
 import qualified Data.ByteString as BS
@@ -165,3 +166,5 @@ data ResultFormat = UniformatResult FormatCode
                   | PolyformatResult [FormatCode]
                     -- ^ The list must contain fewer than 2^16 elements.
                     deriving (Eq, Ord, Show, Read)
+
+type ErrorData = [(MessageField, ByteString0)]

@@ -15,7 +15,7 @@ import Database.Postgresql.Native.Authenticator.Internal
 -- 'SCMCredential')
 defaultAuthenticator :: Authenticator
 defaultAuthenticator = Authenticator auth
-    where auth AuthOK = Just $ \_ _ -> return ()
+    where auth AuthOK = Just $ \_ _ -> return Nothing
           auth SCMCredential = Just $ \t _ -> do
                                  sendSCMCredentials t
                                  expectAuthOK t

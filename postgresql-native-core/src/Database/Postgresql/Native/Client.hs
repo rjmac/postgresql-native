@@ -37,13 +37,18 @@ import Control.Concurrent (MVar)
 import Control.Concurrent (newMVar)
 import Control.Concurrent (withMVar)
 
+data InTransaction = NotInTransaction
+                   | InTransaction
+                   deriving (Read, Show, Eq, Ord, Enum, Bounded)
+
+-- | The externally-visible state of a 'Client'.
 data State = Closed
            -- ^ The 'Client' has been closed and can no longer be
            -- used.
            | Broken
            -- ^ A fatal error has been received, but the 'Client' is
            -- not yet actually closed.
-           | Idle
+           | Idle InTransaction
            -- ^ The connection is healthy and the 'Client' has no
            -- operations in progress.
            | AwaitingResponse
@@ -61,7 +66,7 @@ data State = Closed
            | ResponseReceived
            -- ^ A 'CommandComplete' message has been received but not
            -- yet either 'ReadyForQuery' or more responses.
-             deriving (Read, Show, Eq, Ord, Enum, Bounded)
+             deriving (Read, Show, Eq, Ord)
 
 data BackendKey = BackendKey !ServerPid !ServerKey
 
@@ -113,21 +118,27 @@ instance Default OptionalClientSettings where
 withClientLock :: Client -> IO a -> IO a
 withClientLock c op = withMVar (mutex c) $ \_ -> op
 
-connect :: ClientSettings -> IO Client
+connect :: ClientSettings -> IO (Either ErrorData Client)
 connect cs = connectEx cs def
 
-connectEx :: ClientSettings -> OptionalClientSettings -> IO Client
+connectEx :: ClientSettings -> OptionalClientSettings -> IO (Either ErrorData Client)
 connectEx clientSettings@ClientSettings{..} optionalClientSettings@OptionalClientSettings{..} =
     bracketOnError connectionProvider C.closeRudely $ \conn -> do
       mutex <- newMVar ()
       transport <- T.open conn transportSettings
       maybeUpgrade transport
-      login transport username initialDatabase applicationName authenticator
-      (sessionParametersValue, backendKey) <- receiveSessionData transport
-      print sessionParametersValue
-      sessionParameters <- newIORef sessionParametersValue
-      clientState <- newIORef Idle
-      return Client {..}
+      login transport username initialDatabase applicationName authenticator >>= \case
+        Nothing -> do
+          receiveSessionData transport >>= \case
+            Right (sessionParametersValue, backendKey) -> do
+              print sessionParametersValue
+              sessionParameters <- newIORef sessionParametersValue
+              clientState <- newIORef $ Idle NotInTransaction
+              return $ Right Client {..}
+            Left err ->
+              return $ Left err
+        Just err ->
+          return $ Left err
 
 maybeUpgrade :: T.Transport -> IO ()
 maybeUpgrade t =
@@ -139,7 +150,7 @@ maybeUpgrade t =
         SSLNotOK -> throwIO SSLNotSupportedByServer
         SSLFatal -> throwIO SSLNotSupportedByServer
 
-login :: T.Transport -> ByteString0 -> ByteString0 -> ByteString0 -> Authenticator -> IO ()
+login :: T.Transport -> ByteString0 -> ByteString0 -> ByteString0 -> Authenticator -> IO (Maybe ErrorData)
 login t usr initdb appName (Authenticator auth) = do
   T.sendInitialMessage t $ StartupMessage [("user",usr)
                                           ,("database",initdb)
@@ -148,19 +159,21 @@ login t usr initdb appName (Authenticator auth) = do
                                           ,("application_name",appName)]
   T.nextMessage t >>= \case
     AuthenticationResponse code ->
-        case auth code of
-          Just op -> op t usr
-          Nothing -> throwIO $ UnsupportedAuthenticationRequirement code
-    ErrorResponse c -> error $ show c -- TODO: I need errors!
-    other -> throwIO $ UnexpectedMessage other
+      case auth code of
+       Just op -> op t usr
+       Nothing -> throwIO $ UnsupportedAuthenticationRequirement code
+    ErrorResponse c ->
+      return $ Just c
+    other ->
+      throwIO $ UnexpectedMessage other
 
-receiveSessionData :: T.Transport -> IO (Map.Map ParameterName ByteString0, BackendKey)
+receiveSessionData :: T.Transport -> IO (Either ErrorData (Map.Map ParameterName ByteString0, BackendKey))
 receiveSessionData t = go Map.empty Nothing
     where go sessionParameters backendKey = T.nextMessage t >>= \case
             ParameterStatus param value -> go (Map.insert param value sessionParameters) backendKey
             BackendKeyData p k -> go sessionParameters (Just $ BackendKey p k)
-            ReadyForQuery _ -> return (sessionParameters, fromMaybe (error "TODO no backend key") backendKey)
-            ErrorResponse c -> error $ show c -- TODO
+            ReadyForQuery _ -> return $ Right (sessionParameters, fromMaybe (error "TODO no backend key") backendKey)
+            ErrorResponse c -> return $ Left c
             NoticeResponse c -> error $ show c -- TODO
             other -> throwIO $ UnexpectedMessage other
 
