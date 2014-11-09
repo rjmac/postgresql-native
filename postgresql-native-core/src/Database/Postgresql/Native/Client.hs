@@ -33,6 +33,9 @@ import qualified Database.Postgresql.Native.Transport as T
 import Database.Postgresql.Native.Message
 import Database.Postgresql.Native.ProtocolError (ProtocolError(UnexpectedMessage))
 import Database.Postgresql.Native.Types
+import Control.Concurrent (MVar)
+import Control.Concurrent (newMVar)
+import Control.Concurrent (withMVar)
 
 data State = Closed
            -- ^ The 'Client' has been closed and can no longer be
@@ -66,7 +69,8 @@ data BackendKey = BackendKey !ServerPid !ServerKey
 -- from only one thread at a time (concurrent actions on a single
 -- 'Client' will block) with the exception that 'cancel' may be called
 -- at any time.
-data Client = Client { clientState :: IORef State
+data Client = Client { mutex :: MVar ()
+                     , clientState :: IORef State
                      , sessionParameters :: IORef (Map.Map ParameterName ByteString0)
                      , backendKey :: !BackendKey
                      , transport :: Transport
@@ -106,12 +110,16 @@ instance Default OptionalClientSettings where
     def = OptionalClientSettings { transportSettings = def
                                  , applicationName = "" }
 
+withClientLock :: Client -> IO a -> IO a
+withClientLock c op = withMVar (mutex c) $ \_ -> op
+
 connect :: ClientSettings -> IO Client
 connect cs = connectEx cs def
 
 connectEx :: ClientSettings -> OptionalClientSettings -> IO Client
 connectEx clientSettings@ClientSettings{..} optionalClientSettings@OptionalClientSettings{..} =
     bracketOnError connectionProvider C.closeRudely $ \conn -> do
+      mutex <- newMVar ()
       transport <- T.open conn transportSettings
       maybeUpgrade transport
       login transport username initialDatabase applicationName authenticator
@@ -198,8 +206,8 @@ nextMessage Client{transport, sessionParameters} = do
   return msg
 
 parameter :: Client -> ParameterName -> IO (Maybe ByteString0)
-parameter Client{sessionParameters} pn = do
-  currentParams <- readIORef sessionParameters
+parameter c@Client{sessionParameters} pn = do
+  currentParams <- withClientLock c $ readIORef sessionParameters
   return $ Map.lookup pn currentParams
 
 -- | Cancels an in-progress operation.  This creates a new connection
